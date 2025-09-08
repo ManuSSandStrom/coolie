@@ -1,0 +1,35 @@
+﻿:root {
+  --bg: #0b0f14;
+  --panel: #121821;
+  --text: #e7edf4;
+  --muted: #94a3b8;
+  --accent: #60a5fa;
+  --border: #1f2937;
+  --code-bg: #0f172a;
+}
+* { box-sizing: border-box; }
+html, body, #root { height: 100%; margin: 0; background: var(--bg); color: var(--text); font-family: Inter, ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, Noto Sans, Helvetica Neue, Arial, "Apple Color Emoji", "Segoe UI Emoji"; }
+.app { display: grid; grid-template-columns: 300px 1fr; height: 100%; }
+@media (max-width: 900px) { .app { grid-template-columns: 1fr; } .sidebar { display: none; } }
+.sidebar { border-right: 1px solid var(--border); background: var(--panel); padding: 12px; overflow: auto; }
+.sidebar h1 { font-size: 18px; margin: 0 0 12px; }
+.side-item { display: flex; align-items: center; justify-content: space-between; padding: 8px 10px; border-radius: 8px; margin-bottom: 6px; cursor: pointer; border: 1px solid transparent; }
+.side-item:hover { background: #0f1420; border-color: var(--border); }
+.side-item.active { background: #0f1420; border-color: var(--accent); }
+.chat { display: flex; flex-direction: column; height: 100%; }
+.header { padding: 12px 16px; border-bottom: 1px solid var(--border); background: var(--panel); display: flex; align-items: center; justify-content: space-between; }
+.header-title { font-weight: 600; }
+.messages { flex: 1; overflow: auto; padding: 16px; }
+.msg { max-width: 900px; margin: 0 auto 14px; padding: 12px 14px; border-radius: 10px; white-space: pre-wrap; word-wrap: break-word; border: 1px solid var(--border); }
+.msg.user { background: #12131a; }
+.msg.assistant { background: #0e1320; }
+.role { font-size: 12px; color: var(--muted); margin-bottom: 6px; }
+.code { background: var(--code-bg); border: 1px solid var(--border); border-radius: 8px; padding: 10px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+.inputbar { border-top: 1px solid var(--border); padding: 12px; background: var(--panel); }
+.inputrow { max-width: 900px; margin: 0 auto; display: flex; gap: 8px; }
+.textarea { flex: 1; min-height: 48px; max-height: 160px; background: #0f1420; color: var(--text); border: 1px solid var(--border); border-radius: 10px; padding: 10px 12px; resize: vertical; }
+.button { background: var(--accent); color: #06233f; border: 0; padding: 10px 14px; border-radius: 10px; font-weight: 600; cursor: pointer; }
+.button:disabled { opacity: 0.6; cursor: default; }
+.copy { margin-left: 8px; font-size: 12px; color: var(--muted); cursor: pointer; }
+
+.header::after { content: "Developed by Manohar"; color: var(--muted); font-size: 12px; }
