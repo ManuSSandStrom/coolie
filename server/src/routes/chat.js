@@ -1,9 +1,18 @@
 ﻿import express from "express";
+import mongoose from "mongoose";
 import { Conversation } from "../models/Conversation.js";
 import { Message } from "../models/Message.js";
 import { generateChatReply, getOpenAI, getModel } from "../openai.js";
 
 export const router = express.Router();
+
+// Ensure DB is connected
+router.use((req, res, next) => {
+  if (mongoose.connection.readyState !== 1) {
+    return res.status(503).json({ error: "Database connection not ready. Please try again in a moment." });
+  }
+  next();
+});
 
 const SYSTEM_PROMPT = `You are Coolie, a concise, friendly, and highly capable coding assistant.
 - Answer with plain text only. No images or files.
@@ -32,6 +41,7 @@ router.get('/conversations', async (_req, res, next) => {
 router.patch('/conversations/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ error: 'invalid id' });
     const title = (req.body?.title || '').toString().trim().slice(0, 120);
     if (!title) return res.status(400).json({ error: 'title is required' });
     await Conversation.updateOne({ _id: id }, { $set: { title, updatedAt: new Date() } });
@@ -43,6 +53,7 @@ router.patch('/conversations/:id', async (req, res, next) => {
 router.delete('/conversations/:id', async (req, res, next) => {
   try {
     const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ error: 'invalid id' });
     await Message.deleteMany({ conversationId: id });
     await Conversation.deleteOne({ _id: id });
     res.json({ id, deleted: true });
@@ -53,6 +64,7 @@ router.delete('/conversations/:id', async (req, res, next) => {
 router.get('/conversations/:id/messages', async (req, res, next) => {
   try {
     const { id } = req.params;
+    if (!mongoose.Types.ObjectId.isValid(id)) return res.status(400).json({ error: 'invalid id' });
     const msgs = await Message.find({ conversationId: id }).sort({ createdAt: 1 }).lean();
     res.json(msgs.map(m => ({ id: m._id.toString(), role: m.role, content: m.content, createdAt: m.createdAt })));
   } catch (err) { next(err); }
@@ -65,6 +77,13 @@ router.post('/chat', async (req, res, next) => {
     if (!message) return res.status(400).json({ error: 'message is required' });
 
     let convoId = conversationId;
+    if (convoId && !mongoose.Types.ObjectId.isValid(convoId)) convoId = undefined;
+    
+    if (convoId) {
+      const exists = await Conversation.exists({ _id: convoId });
+      if (!exists) convoId = undefined;
+    }
+
     if (!convoId) {
       const convo = await Conversation.create({ title: message.trim().slice(0, 60) || 'New Chat' });
       convoId = convo._id.toString();
@@ -88,8 +107,15 @@ router.get('/chat/stream', async (req, res, next) => {
   let convoId;
   try {
     const message = (req.query.q || '').toString();
-    convoId = req.query.conversationId ? req.query.conversationId.toString() : undefined;
+    let maybeId = req.query.conversationId ? req.query.conversationId.toString() : undefined;
+    
     if (!message) return res.status(400).end();
+
+    // Validate conversationId
+    if (maybeId && mongoose.Types.ObjectId.isValid(maybeId)) {
+      const exists = await Conversation.exists({ _id: maybeId });
+      if (exists) convoId = maybeId;
+    }
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
@@ -140,7 +166,7 @@ router.get('/chat/stream', async (req, res, next) => {
     }
     res.end();
   } catch (err) {
-    console.error('[stream error]', err);
+    console.error('[stream-error]', err);
     if (!res.headersSent) {
       res.status(500).json({ error: err.message });
     } else {
