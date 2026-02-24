@@ -4,9 +4,15 @@ let client;
 export function getOpenAI() {
   if (!client) {
     const key = process.env.OPENAI_API_KEY;
-    if (!key) throw new Error('OPENAI_API_KEY not set');
-    const baseURL = process.env.OPENAI_BASE_URL;
-    client = new OpenAI({ apiKey: key, baseURL });
+    if (!key || key.trim() === "") {
+      throw new Error('OPENAI_API_KEY is missing. Please set it in your Render/Deployment environment variables.');
+    }
+    const baseURL = process.env.OPENAI_BASE_URL || undefined;
+    client = new OpenAI({ 
+      apiKey: key, 
+      baseURL: baseURL 
+    });
+    console.log('[OpenAI] Client initialized successfully');
   }
   return client;
 }
@@ -34,6 +40,5 @@ export async function generateChatReply(history) {
     temperature: 0.2,
   });
 
-  const text = completion.choices?.[0]?.message?.content?.trim() ?? '';
-  return text;
+  return completion.choices?.[0]?.message?.content?.trim() ?? '';
 }
