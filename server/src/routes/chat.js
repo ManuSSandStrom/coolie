@@ -3,8 +3,13 @@ import { Conversation } from "../models/Conversation.js";
 import { Message } from "../models/Message.js";
 import { generateChatReply, getOpenAI, getModel } from "../openai.js";
 
-
 export const router = express.Router();
+
+const SYSTEM_PROMPT = `You are Coolie, a concise, friendly, and highly capable coding assistant.
+- Answer with plain text only. No images or files.
+- Prefer minimal, correct code examples using fenced blocks.
+- When fixing bugs, explain the root cause and a targeted fix.
+- Keep responses tight; avoid unnecessary prose.`;
 
 // Create conversation
 router.post('/conversations', async (req, res, next) => {
@@ -18,7 +23,7 @@ router.post('/conversations', async (req, res, next) => {
 // List conversations
 router.get('/conversations', async (_req, res, next) => {
   try {
-    const list = await Conversation.find().sort({ updatedAt: -1 }).limit(50).lean();
+    const list = await Conversation.find().sort({ updatedAt: -1 }).limit(100).lean();
     res.json(list.map(c => ({ id: c._id.toString(), title: c.title, updatedAt: c.updatedAt })));
   } catch (err) { next(err); }
 });
@@ -33,6 +38,7 @@ router.patch('/conversations/:id', async (req, res, next) => {
     res.json({ id, title });
   } catch (err) { next(err); }
 });
+
 // Delete conversation and its messages
 router.delete('/conversations/:id', async (req, res, next) => {
   try {
@@ -52,86 +58,66 @@ router.get('/conversations/:id/messages', async (req, res, next) => {
   } catch (err) { next(err); }
 });
 
-// Chat endpoint: send user message, get assistant reply (non-streaming)
+// Non-streaming chat (fallback)
 router.post('/chat', async (req, res, next) => {
   try {
-    const body = req.body || {};
-    const conversationId = body.conversationId;
-    const message = body.message;
-    if (!message || typeof message !== 'string') return res.status(400).json({ error: 'message is required' });
-    if (message.length > 4000) return res.status(413).json({ error: 'message too long' });
+    const { conversationId, message } = req.body || {};
+    if (!message) return res.status(400).json({ error: 'message is required' });
 
     let convoId = conversationId;
     if (!convoId) {
-      const title = message.trim().slice(0, 60) || 'New Chat';
-      const convo = await Conversation.create({ title });
+      const convo = await Conversation.create({ title: message.trim().slice(0, 60) || 'New Chat' });
       convoId = convo._id.toString();
     }
 
     await Message.create({ conversationId: convoId, role: 'user', content: message });
 
-    // If conversation title is placeholder, update from first message
-    const convoDoc = await Conversation.findById(convoId).lean();
-    if (convoDoc && (!convoDoc.title || convoDoc.title === 'New Chat')) {
-      await Conversation.updateOne({ _id: convoId }, { $set: { title: message.trim().slice(0, 60) || 'New Chat' } });
-    }
-
-    const recent = await Message.find({ conversationId: convoId })
-      .sort({ createdAt: -1 })
-      .limit(20)
-      .lean();
+    const recent = await Message.find({ conversationId: convoId }).sort({ createdAt: -1 }).limit(10).lean();
     const history = recent.reverse();
 
     const reply = await generateChatReply(history);
     await Message.create({ conversationId: convoId, role: 'assistant', content: reply });
-
-    // Touch conversation updated time
     await Conversation.updateOne({ _id: convoId }, { $set: { updatedAt: new Date() } });
 
     res.json({ conversationId: convoId, reply });
   } catch (err) { next(err); }
 });
 
-// Streaming chat via SSE for typing effect
+// Streaming chat via SSE
 router.get('/chat/stream', async (req, res, next) => {
+  let convoId;
   try {
     const message = (req.query.q || '').toString();
-    const conversationId = req.query.conversationId ? req.query.conversationId.toString() : undefined;
+    convoId = req.query.conversationId ? req.query.conversationId.toString() : undefined;
     if (!message) return res.status(400).end();
-    if (message.length > 4000) return res.status(413).end();
 
     res.setHeader('Content-Type', 'text/event-stream');
     res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no');
 
     let closed = false;
     req.on('close', () => { closed = true; });
 
-    let convoId = conversationId;
     if (!convoId) {
-      const title = message.trim().slice(0, 60) || 'New Chat';
-      const convo = await Conversation.create({ title });
+      const convo = await Conversation.create({ title: message.trim().slice(0, 60) || 'New Chat' });
       convoId = convo._id.toString();
     }
 
     await Message.create({ conversationId: convoId, role: 'user', content: message });
 
-    const convoDoc = await Conversation.findById(convoId).lean();
-    if (convoDoc && (!convoDoc.title || convoDoc.title === 'New Chat')) {
-      await Conversation.updateOne({ _id: convoId }, { $set: { title: message.trim().slice(0, 60) || 'New Chat' } });
-    }
-
-    const recent = await Message.find({ conversationId: convoId })
-      .sort({ createdAt: -1 })
-      .limit(20)
-      .lean();
+    const recent = await Message.find({ conversationId: convoId }).sort({ createdAt: -1 }).limit(10).lean();
     const history = recent.reverse();
 
-    // Stream from OpenAI
     const client = getOpenAI();
-    const messages = history.map(m => ({ role: m.role, content: m.content }));
+    const model = getModel();
+    const messages = [
+      { role: 'system', content: SYSTEM_PROMPT },
+      ...history.map(m => ({ role: m.role, content: m.content }))
+    ];
+
     const stream = await client.chat.completions.create({
-      model: getModel(),
+      model: model,
       messages: messages,
       temperature: 0.2,
       stream: true,
@@ -140,22 +126,26 @@ router.get('/chat/stream', async (req, res, next) => {
     let full = '';
     for await (const part of stream) {
       if (closed) break;
-      const delta = (part.choices && part.choices[0] && part.choices[0].delta && part.choices[0].delta.content) || '';
+      const delta = part.choices?.[0]?.delta?.content || '';
       if (delta) {
         full += delta;
-        res.write('data: ' + JSON.stringify({ type: 'delta', data: delta }) + '\n\n');
+        res.write(`data: ${JSON.stringify({ type: 'delta', data: delta })}\n\n`);
       }
     }
 
     if (!closed) {
       await Message.create({ conversationId: convoId, role: 'assistant', content: full });
       await Conversation.updateOne({ _id: convoId }, { $set: { updatedAt: new Date() } });
-      res.write('data: ' + JSON.stringify({ type: 'done', conversationId: convoId }) + '\n\n');
+      res.write(`data: ${JSON.stringify({ type: 'done', conversationId: convoId })}\n\n`);
     }
     res.end();
-  } catch (err) { next(err); }
+  } catch (err) {
+    console.error('[stream error]', err);
+    if (!res.headersSent) {
+      res.status(500).json({ error: err.message });
+    } else {
+      res.write(`data: ${JSON.stringify({ type: 'error', message: err.message })}\n\n`);
+      res.end();
+    }
+  }
 });
-
-
-
-
